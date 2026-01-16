@@ -3,7 +3,7 @@ import time
 import httpx
 import json
 import trafilatura
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dateutil import parser as date_parser
 from celery import Celery
 from sqlalchemy import select, and_
@@ -158,7 +158,7 @@ async def fetch_market_news(keyword: str, time_range: str = "w") -> List[str]:
 
 async def get_cached_urls(db, keyword: str) -> Optional[List[str]]:
     """Check if we have recent search results for this keyword"""
-    one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
     stmt = select(SearchCache).where(
         and_(
             SearchCache.keyword == keyword,
@@ -183,20 +183,32 @@ async def process_keyword_news_batch(keyword: str, force: bool = False):
             cache_entry = await db.scalar(stmt)
             if cache_entry:
                 cache_entry.urls = urls
-                cache_entry.created_at = datetime.utcnow()
+                cache_entry.created_at = datetime.now(timezone.utc)
             else:
                 db.add(SearchCache(keyword=keyword, urls=urls))
             await db.commit()
 
         # Step 1: Scrape and collect valid articles
+        exclude_domains = ['baonghean.vn']
         to_process = []
         for url in urls:
+            # Skip slow/problematic domains
+            domain = urlparse(url).netloc
+            if "bao" in domain or any(d in url for d in exclude_domains):
+                print(f"SCRAPER: Skipping excluded domain: {url}")
+                continue
+
             stmt = select(News).where(News.url == url)
             existing = await db.scalar(stmt)
             if existing:
                 continue
 
-            downloaded = trafilatura.fetch_url(url)
+            try:
+                downloaded = trafilatura.fetch_url(url)
+            except Exception as e:
+                print(f"SCRAPER: Skip {url} due to error: {e}")
+                continue
+            
             if downloaded:
                 content = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
                 metadata = trafilatura.extract_metadata(downloaded)
@@ -242,17 +254,23 @@ async def process_keyword_news_batch(keyword: str, force: bool = False):
                             pub_date = None
                     if not pub_date and getattr(analysis, 'published_date', None):
                         try:
+                            # Parse ngày từ chuỗi văn bản của báo
                             pub_date = date_parser.parse(analysis.published_date)
                         except Exception:
                             pub_date = None
-                    # Fallback to current UTC if parsing failed
+
+                    # Fallback nếu không có ngày xuất bản: Lấy giờ UTC hiện tại
                     if not pub_date:
-                        pub_date = datetime.utcnow()
-                    # Ensure timezone-aware UTC datetime
+                        pub_date = datetime.now(timezone.utc)
+
+                    # Đảm bảo datetime luôn có múi giờ (Timezone-aware)
                     if pub_date.tzinfo is None:
-                        pub_date = pub_date.replace(tzinfo=datetime.timezone.utc)
+                        # Nếu là tin VN không có múi giờ, gán UTC+7 sau đó chuyển sang UTC
+                        vn_tz = timezone(timedelta(hours=7))
+                        pub_date = pub_date.replace(tzinfo=vn_tz).astimezone(timezone.utc)
                     else:
-                        pub_date = pub_date.astimezone(datetime.timezone.utc)
+                        # Nếu đã có múi giờ, chỉ việc ép về chuẩn UTC để lưu DB
+                        pub_date = pub_date.astimezone(timezone.utc)
 
                     # Extract primary price for News table
                     p_val = None
@@ -305,6 +323,8 @@ async def process_keyword_news_batch(keyword: str, force: bool = False):
 
             except Exception as e:
                 print(f"LLM BATCH ERROR: {e}")
+                # Rollback transaction on error to prevent 'current transaction is aborted'
+                await db.rollback()
                 # Re-raise to trigger Celery retry if it's a quota issue
                 if "429" in str(e) or "503" in str(e) or "ResourceExhausted" in str(e):
                     raise e

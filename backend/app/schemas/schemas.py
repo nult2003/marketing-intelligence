@@ -46,6 +46,7 @@ class NewsBase(BaseModel):
     risk_type: Optional[str] = None
     action_recommendation: Optional[str] = None
     industry_tag: Optional[str] = None
+    published_at: Optional[datetime] = None
 
 class NewsCreate(NewsBase):
     content_hash: str

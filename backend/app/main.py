@@ -26,16 +26,22 @@ def startup_event():
         # Fallback to create_all if migrations fail (optional)
         Base.metadata.create_all(bind=engine)
 
-app.include_router(auth_router, prefix="/api", tags=["auth"])
-app.include_router(api_router, prefix="/api", tags=["endpoints"])
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_check():
+    print("------------------------------------------------")
+    print("CORS CONFIGURATION RELOADED: Localhost Allowed")
+    print("------------------------------------------------")
+
+app.include_router(auth_router, prefix="/api", tags=["auth"])
+app.include_router(api_router, prefix="/api", tags=["endpoints"])
 
 @app.get("/")
 async def root():

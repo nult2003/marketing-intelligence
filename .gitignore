@@ -2,3 +2,4 @@
 /backend/app/__pycache__
 /.env
 /frontend/.env
+/backend/.env

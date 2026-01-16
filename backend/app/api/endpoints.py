@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 from sqlalchemy.orm.attributes import flag_modified
 from ..core.async_database import get_async_db
@@ -44,22 +44,39 @@ async def get_admin_config(db: AsyncSession = Depends(get_async_db)):
 async def get_analytics(
     industry: str = "All", 
     time_range: str = "Monthly",
+    tz_offset: int = 420, # Default to 420 (UTC+7) if not provided
     db: AsyncSession = Depends(get_async_db)
 ):
     """Get aggregated sentiment, impact, and real market trends filtered by time range"""
     
-    # Calculate start date based on time_range
-    now = datetime.utcnow()
+    # Get current UTC time
+    now = datetime.now(timezone.utc)
+    
+    # Calculate local start date based on tz_offset (in minutes)
+    user_offset = timedelta(minutes=tz_offset)
+    local_now = now + user_offset
+    
     if time_range == "Daily":
-        start_date = now - timedelta(days=1)
+        # Start of today in user's local time (00:00:00)
+        local_start_of_today = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Convert back to UTC for DB query
+        start_date = local_start_of_today - user_offset
     elif time_range == "Weekly":
-        start_date = now - timedelta(days=7)
+        # Start of current week in user's local time (Monday 00:00:00)
+        days_since_monday = local_now.weekday()
+        local_start_of_week = (local_now - timedelta(days=days_since_monday)).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date = local_start_of_week - user_offset
     elif time_range == "Monthly":
+        # Last 30 days
         start_date = now - timedelta(days=30)
     elif time_range == "Yearly":
+        # Last 365 days
         start_date = now - timedelta(days=365)
     else:
+        # Default fallback
         start_date = now - timedelta(days=30)
+
+    print(f"ANALYTICS: range={time_range}, industry={industry}, start_date_utc={start_date}")
 
     # 1. Fetch News for Sentiment/Impact
     news_stmt = select(News).where(News.published_at >= start_date).order_by(desc(News.published_at))
@@ -70,13 +87,14 @@ async def get_analytics(
     news_items = news_result.scalars().all()
 
     # 2. Fetch Trends for Price Evolution
-    # MarketTrend now has published_at, so we filter and sort by it.
     trend_stmt = select(MarketTrend).where(MarketTrend.published_at >= start_date).order_by(desc(MarketTrend.published_at))
     if industry != "All":
         trend_stmt = trend_stmt.where(MarketTrend.industry_tag == industry)
     
     trend_result = await db.execute(trend_stmt)
     trend_items = trend_result.scalars().all()
+    
+    print(f"ANALYTICS RESULT: news_count={len(news_items)}, trends_count={len(trend_items)}")
     
     return {
         "news": news_items,

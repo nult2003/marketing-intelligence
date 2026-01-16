@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from sqlalchemy import String, Boolean, Float, DateTime, JSON, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -31,8 +31,8 @@ class News(Base):
     price_value: Mapped[float | None] = mapped_column(Float)
     unit: Mapped[str | None] = mapped_column(String(50))
     industry_tag: Mapped[str | None] = mapped_column(String(100), index=True)
-    published_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class AdminConfig(Base):
     __tablename__ = "admin_configs"
@@ -47,7 +47,7 @@ class SearchCache(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     keyword: Mapped[str] = mapped_column(String(255), index=True)
     urls: Mapped[list[str]] = mapped_column(JSON, default=list)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class MarketTrend(Base):
     __tablename__ = "market_trends"
@@ -60,5 +60,5 @@ class MarketTrend(Base):
     metric_unit: Mapped[str | None] = mapped_column(String(50))
     metric_type: Mapped[str] = mapped_column(String(20), default="absolute") # absolute or ratio
     industry_tag: Mapped[str | None] = mapped_column(String(100), index=True)
-    published_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    published_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

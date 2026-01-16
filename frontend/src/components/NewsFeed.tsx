@@ -2,9 +2,23 @@ import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Filter, TrendingUp, AlertTriangle, Search, Clock, ArrowUpDown, ShieldCheck } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, Badge, Input, Button, cn } from './ui/base-ui'
-import { format, isToday, isYesterday, isAfter, subDays, subMonths, subYears, startOfDay, parseISO } from 'date-fns'
+import { format, isToday, isYesterday, isAfter, subDays, subMonths, subYears, startOfDay, parseISO, isValid } from 'date-fns'
 
 import { apiRequest } from '../lib/api'
+
+// Helper to safely format UTC date string to Local Time string
+const formatDateSafe = (dateStr: string | undefined | null, fmt: string = 'yyyy-MM-dd HH:mm:ss') => {
+    if (!dateStr) return 'N/A';
+    try {
+        // Ensure UTC context if missing 'Z' or offset
+        const isoString = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : `${dateStr}Z`;
+        const date = parseISO(isoString);
+        if (!isValid(date)) return 'Invalid Date';
+        return format(date, fmt);
+    } catch (e) {
+        return 'Invalid Date';
+    }
+}
 
 export type NewsItem = {
     id: number;
@@ -19,6 +33,7 @@ export type NewsItem = {
     industry_tag: string;
     created_at: string;
     source_domain?: string;
+    published_at: string;
 }
 
 export type TimeRange = 'Daily' | 'Weekly' | 'Monthly' | 'Quarterly' | 'Yearly';
@@ -26,7 +41,7 @@ export type TimeRange = 'Daily' | 'Weekly' | 'Monthly' | 'Quarterly' | 'Yearly';
 export const NewsFeed = () => {
     const [industryFilter, setIndustryFilter] = useState('All')
     const [minScore, setMinScore] = useState(0)
-    const [timeRange, setTimeRange] = useState<TimeRange>('Monthly')
+    const [timeRange, setTimeRange] = useState<TimeRange>('Daily')
     const [sortBy, setSortBy] = useState<'Latest' | 'Highest Impact'>('Latest')
 
     const { data: news, isLoading } = useQuery<NewsItem[]>({
@@ -50,8 +65,8 @@ export const NewsFeed = () => {
         }
 
         let filtered = news.filter(item => {
-            const itemDate = parseISO(item.created_at)
-            const matchesTime = isAfter(itemDate, startDate)
+            const itemDate = parseISO(item.published_at || item.created_at)
+            const matchesTime = itemDate >= startDate
             const matchesIndustry = industryFilter === 'All' || item.industry_tag === industryFilter
             const matchesScore = item.impact_score >= minScore
             return matchesTime && matchesIndustry && matchesScore
@@ -245,7 +260,7 @@ export const NewsFeed = () => {
                                                         <Badge variant="outline" className="text-[10px] font-black uppercase tracking-widest text-slate-600 border-2 border-slate-100 bg-slate-50">
                                                             {item.industry_tag}
                                                         </Badge>
-                                                        <span className="text-[11px] text-slate-500 font-black ml-auto bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">{format(parseISO(item.created_at), 'hh:mm a')}</span>
+                                                        <span className="text-[11px] text-slate-500 font-black ml-auto bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">{formatDateSafe(item.published_at)}</span>
                                                     </div>
                                                 </div>
                                                 <div className="text-right flex flex-col items-end min-w-[110px] justify-center bg-slate-900 text-white p-5 rounded-2xl border-2 border-slate-800 shadow-xl">

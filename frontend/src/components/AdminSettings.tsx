@@ -1,14 +1,26 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Save, Plus, X, Play, Pause, Settings2, Users, Bell, Mail, ShieldCheck, BarChart3, PieChart, LineChart as LineChartIcon, Activity, Trophy, Clock, TrendingUp, Filter } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, Button, Input, Badge, cn } from './ui/base-ui'
-import {
-    LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-    PieChart as RePieChart, Pie, Cell,
-    BarChart, Bar, Legend, ScatterChart, Scatter, ZAxis,
-    ComposedChart, Area
-} from 'recharts'
+import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart as RePieChart, Pie, Legend, BarChart, Bar } from 'recharts'
 import { useQuery } from '@tanstack/react-query'
-import { subHours, subDays, subMonths, subYears, format, parseISO, isAfter } from 'date-fns'
+import { format, subHours, subDays, subMonths, subYears, isAfter, parseISO, isValid } from 'date-fns'
+
+import { apiRequest } from '../lib/api'
+import { useQueryClient } from '@tanstack/react-query'
+
+// Helper to safely format UTC date string to Local Time string
+const formatDateSafe = (dateStr: string | undefined | null, fmt: string = 'yyyy-MM-dd HH:mm:ss') => {
+    if (!dateStr) return 'N/A';
+    try {
+        // Ensure UTC context if missing 'Z' or offset
+        const isoString = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : `${dateStr}Z`;
+        const date = parseISO(isoString);
+        if (!isValid(date)) return 'Invalid Date';
+        return format(date, fmt);
+    } catch (e) {
+        return 'Invalid Date';
+    }
+}
 
 type TimeRange = 'Daily' | 'Weekly' | 'Monthly' | 'Yearly'
 
@@ -18,14 +30,11 @@ const COMMODITY_MAPPING = {
     'Logistics': { name: 'Diesel Price', symbol: 'DIESEL', unit: '$/gal', color: '#f59e0b' },
 }
 
-import { apiRequest } from '../lib/api'
-import { useQueryClient } from '@tanstack/react-query'
-
 export const AdminSettings = () => {
     const queryClient = useQueryClient()
     const [activeTab, setActiveTab] = useState<'crawler' | 'users' | 'analytics' | 'ranking'>('analytics')
     const [selectedIndustry, setSelectedIndustry] = useState<string>('Electric Vehicle')
-    const [timeRange, setTimeRange] = useState<TimeRange>('Monthly')
+    const [timeRange, setTimeRange] = useState<TimeRange>('Daily')
 
     // Config Fetching
     const { data: config, isLoading: isLoadingConfig } = useQuery({
@@ -94,23 +103,17 @@ export const AdminSettings = () => {
     const queryIndustry = activeTab === 'ranking' ? 'All' : selectedIndustry;
     const { data: analyticsData = { news: [], trends: [] } } = useQuery<any>({
         queryKey: ['admin-analytics', queryIndustry, timeRange],
-        queryFn: () => apiRequest<any>(`/admin/analytics?industry=${encodeURIComponent(queryIndustry)}&time_range=${timeRange}`)
+        queryFn: () => {
+            const tzOffset = -new Date().getTimezoneOffset(); // e.g. 420 for UTC+7
+            return apiRequest<any>(`/admin/analytics?industry=${encodeURIComponent(queryIndustry)}&time_range=${timeRange}&tz_offset=${tzOffset}`);
+        }
     })
 
     const rawNews = analyticsData.news || []
     const trendData = analyticsData.trends || []
 
     const filteredSentimentData = useMemo(() => {
-        let startDate: Date
-        switch (timeRange) {
-            case 'Daily': startDate = subHours(new Date(), 24); break;
-            case 'Weekly': startDate = subDays(new Date(), 7); break;
-            case 'Monthly': startDate = subMonths(new Date(), 1); break;
-            case 'Yearly': startDate = subYears(new Date(), 1); break;
-            default: startDate = subMonths(new Date(), 1)
-        }
-
-        const filtered = rawNews.filter((item: any) => isAfter(parseISO(item.published_at || item.created_at), startDate))
+        const filtered = rawNews;
 
         const counts = {
             Positive: { name: 'Positive', value: 0, color: '#10b981' },
@@ -163,7 +166,8 @@ export const AdminSettings = () => {
             impact: item.impact_score,
             urgency: item.urgency === 'High' ? 3 : item.urgency === 'Medium' ? 2 : 1,
             title: item.title,
-            id: item.id
+            id: item.id,
+            published_at: item.published_at
         }))
     }, [rawNews])
 
@@ -250,7 +254,9 @@ export const AdminSettings = () => {
                         </div>
                         <div>
                             <h2 className="text-sm font-black text-slate-900 dark:text-slate-100 uppercase tracking-widest leading-none">Global Timeframe</h2>
-                            <p className="text-[10px] text-slate-500 font-bold mt-1">Updates all charts and data groups</p>
+                            <p className="text-[10px] text-slate-500 font-bold mt-1">
+                                Updates all charts | Ref: <span className="font-mono text-indigo-500 ml-1">{format(new Date(), 'yyyy-MM-dd HH:mm:ss')}</span>
+                            </p>
                         </div>
                     </div>
                     <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
@@ -353,6 +359,11 @@ export const AdminSettings = () => {
                                                                     </p>
                                                                 </div>
                                                             </div>
+                                                            <div className="mt-2 text-[9px] text-slate-500 font-mono text-center pt-2 border-t border-slate-800/50">
+                                                                <div className="mt-2 text-[9px] text-slate-500 font-mono text-center pt-2 border-t border-slate-800/50">
+                                                                    {formatDateSafe(data.published_at)}
+                                                                </div>
+                                                            </div>
                                                         </div>
                                                     );
                                                 }
@@ -445,7 +456,7 @@ export const AdminSettings = () => {
                                                         </div>
                                                     </td>
                                                     <td className="px-8 py-4 text-slate-500 font-mono italic text-[9px]">
-                                                        {format(parseISO(t.published_at), 'MMM dd, HH:mm')}
+                                                        {formatDateSafe(t.published_at, 'MMM dd, HH:mm')}
                                                     </td>
                                                 </tr>
                                             ))}
@@ -456,158 +467,165 @@ export const AdminSettings = () => {
                         </Card>
                     </div>
                 </div>
-            )}
+            )
+            }
 
             {/* Ranking, Crawler, Users tabs remain but with improved header consistency... */}
-            {activeTab === 'ranking' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <Card className="bg-slate-950 border-slate-800 text-white shadow-2xl overflow-hidden relative">
-                        <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500" />
-                        <CardHeader className="bg-slate-900/50 border-b border-slate-800 flex flex-row items-center justify-between p-8">
-                            <div>
-                                <CardTitle className="flex items-center gap-3 text-2xl font-black text-white italic">
-                                    <Trophy className="text-emerald-400" size={28} />
-                                    Leaderboard
+            {
+                activeTab === 'ranking' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <Card className="bg-slate-950 border-slate-800 text-white shadow-2xl overflow-hidden relative">
+                            <div className="absolute top-0 left-0 w-full h-1 bg-emerald-500" />
+                            <CardHeader className="bg-slate-900/50 border-b border-slate-800 flex flex-row items-center justify-between p-8">
+                                <div>
+                                    <CardTitle className="flex items-center gap-3 text-2xl font-black text-white italic">
+                                        <Trophy className="text-emerald-400" size={28} />
+                                        Leaderboard
+                                    </CardTitle>
+                                    <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1">Impact Volatility Ranking</p>
+                                </div>
+                            </CardHeader>
+                            <CardContent className="p-8">
+                                <div className="h-[400px] w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <BarChart data={industryImpactData} layout="vertical" margin={{ left: 40, right: 40 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
+                                            <XAxis type="number" stroke="#475569" fontSize={10} fontWeight="900" domain={[0, 10]} axisLine={false} tickLine={false} />
+                                            <YAxis dataKey="name" type="category" stroke="#f1f5f9" fontSize={12} fontWeight="900" axisLine={false} tickLine={false} width={120} />
+                                            <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '12px' }} labelStyle={{ color: '#fff' }} itemStyle={{ color: '#fff' }} />
+                                            <Bar dataKey="score" radius={[0, 4, 4, 0]} barSize={30}>
+                                                {industryImpactData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.score > 7 ? '#10b981' : entry.score > 5 ? '#f59e0b' : '#ef4444'} />)}
+                                            </Bar>
+                                        </BarChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+                )
+            }
+
+            {
+                activeTab === 'crawler' && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <Card className="md:col-span-2 shadow-xl border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+                            <CardHeader className="bg-slate-50 dark:bg-slate-900/50 border-b p-6">
+                                <CardTitle className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                                    <Mail size={14} className="text-indigo-600" />
+                                    Extraction Nodes
                                 </CardTitle>
-                                <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mt-1">Impact Volatility Ranking</p>
-                            </div>
-                        </CardHeader>
-                        <CardContent className="p-8">
-                            <div className="h-[400px] w-full">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <BarChart data={industryImpactData} layout="vertical" margin={{ left: 40, right: 40 }}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" horizontal={false} />
-                                        <XAxis type="number" stroke="#475569" fontSize={10} fontWeight="900" domain={[0, 10]} axisLine={false} tickLine={false} />
-                                        <YAxis dataKey="name" type="category" stroke="#f1f5f9" fontSize={12} fontWeight="900" axisLine={false} tickLine={false} width={120} />
-                                        <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '12px' }} labelStyle={{ color: '#fff' }} itemStyle={{ color: '#fff' }} />
-                                        <Bar dataKey="score" radius={[0, 4, 4, 0]} barSize={30}>
-                                            {industryImpactData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.score > 7 ? '#10b981' : entry.score > 5 ? '#f59e0b' : '#ef4444'} />)}
-                                        </Bar>
-                                    </BarChart>
-                                </ResponsiveContainer>
-                            </div>
-                        </CardContent>
-                    </Card>
-                </div>
-            )}
+                            </CardHeader>
+                            <CardContent className="p-6 space-y-6">
+                                <div className="flex gap-3">
+                                    <Input
+                                        placeholder="Global keyword..."
+                                        value={newKeyword}
+                                        onChange={(e) => setNewKeyword(e.target.value)}
+                                        onKeyDown={(e) => e.key === 'Enter' && addKeyword()}
+                                        className="bg-slate-900 dark:bg-slate-950 text-white dark:text-slate-50 font-black text-xs border-slate-200 dark:border-slate-800 h-12 rounded-xl focus:ring-4 focus:ring-indigo-500/10 placeholder:text-slate-500"
+                                    />
+                                    <Button onClick={addKeyword} className="h-12 w-12 p-0 shadow-lg bg-indigo-600 hover:bg-indigo-700 transition-all text-white"><Plus size={24} strokeWidth={3} /></Button>
+                                </div>
+                                <div className="flex flex-wrap gap-2 pt-2">
+                                    {keywords.map(kw => (
+                                        <Badge key={kw} variant="outline" className="px-4 py-2 flex items-center gap-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-full shadow-sm">
+                                            <span className="text-slate-900 dark:text-slate-100 font-black text-[10px] uppercase tracking-wider">{kw}</span>
+                                            <button onClick={() => removeKeyword(kw)} className="text-slate-400 hover:text-rose-600 transition-colors"><X size={14} /></button>
+                                        </Badge>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+                        <Card className="shadow-xl border-slate-200 dark:border-slate-800 rounded-2xl h-fit">
+                            <CardHeader className="bg-slate-50 dark:bg-slate-900/50 border-b p-6"><CardTitle className="text-xs font-black uppercase tracking-widest text-slate-500">Node Status</CardTitle></CardHeader>
+                            <CardContent className="p-6 space-y-6">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active Crawl</span>
+                                    <button onClick={() => setIsScrapingActive(!isScrapingActive)} className={`relative inline-flex h-7 w-12 items-center rounded-full transition-all shadow-inner ${isScrapingActive ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-800'}`}><span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${isScrapingActive ? 'translate-x-6' : 'translate-x-1'}`} /></button>
+                                </div>
+                                <div className="space-y-4">
+                                    <div className="flex justify-between text-[10px] text-indigo-600 font-black uppercase tracking-[0.2em]"><span>Interval</span><span>{interval}m</span></div>
+                                    <input type="range" min="15" max="1440" step="15" value={interval} onChange={(e) => setInterval(parseInt(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                                </div>
+                                <hr className="border-slate-100 dark:border-slate-800" />
+                                <div className="space-y-3">
+                                    <Button className="w-full h-12 gap-2 font-black text-[10px] uppercase tracking-widest shadow-lg bg-emerald-600 hover:bg-emerald-700" onClick={triggerCrawl}>
+                                        <Play size={16} /> Force Sync Now
+                                    </Button>
+                                    <Button className="w-full h-12 gap-2 font-black text-[10px] uppercase tracking-widest shadow-lg" variant="outline" onClick={() => updateConfig()}>
+                                        <Save size={16} /> Update Settings
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+                )
+            }
 
-            {activeTab === 'crawler' && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <Card className="md:col-span-2 shadow-xl border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
-                        <CardHeader className="bg-slate-50 dark:bg-slate-900/50 border-b p-6">
-                            <CardTitle className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                                <Mail size={14} className="text-indigo-600" />
-                                Extraction Nodes
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-6 space-y-6">
-                            <div className="flex gap-3">
-                                <Input
-                                    placeholder="Global keyword..."
-                                    value={newKeyword}
-                                    onChange={(e) => setNewKeyword(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && addKeyword()}
-                                    className="bg-slate-900 dark:bg-slate-950 text-white dark:text-slate-50 font-black text-xs border-slate-200 dark:border-slate-800 h-12 rounded-xl focus:ring-4 focus:ring-indigo-500/10 placeholder:text-slate-500"
-                                />
-                                <Button onClick={addKeyword} className="h-12 w-12 p-0 shadow-lg bg-indigo-600 hover:bg-indigo-700 transition-all text-white"><Plus size={24} strokeWidth={3} /></Button>
-                            </div>
-                            <div className="flex flex-wrap gap-2 pt-2">
-                                {keywords.map(kw => (
-                                    <Badge key={kw} variant="outline" className="px-4 py-2 flex items-center gap-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-full shadow-sm">
-                                        <span className="text-slate-900 dark:text-slate-100 font-black text-[10px] uppercase tracking-wider">{kw}</span>
-                                        <button onClick={() => removeKeyword(kw)} className="text-slate-400 hover:text-rose-600 transition-colors"><X size={14} /></button>
-                                    </Badge>
-                                ))}
-                            </div>
-                        </CardContent>
-                    </Card>
-                    <Card className="shadow-xl border-slate-200 dark:border-slate-800 rounded-2xl h-fit">
-                        <CardHeader className="bg-slate-50 dark:bg-slate-900/50 border-b p-6"><CardTitle className="text-xs font-black uppercase tracking-widest text-slate-500">Node Status</CardTitle></CardHeader>
-                        <CardContent className="p-6 space-y-6">
-                            <div className="flex items-center justify-between">
-                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Active Crawl</span>
-                                <button onClick={() => setIsScrapingActive(!isScrapingActive)} className={`relative inline-flex h-7 w-12 items-center rounded-full transition-all shadow-inner ${isScrapingActive ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-800'}`}><span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${isScrapingActive ? 'translate-x-6' : 'translate-x-1'}`} /></button>
-                            </div>
-                            <div className="space-y-4">
-                                <div className="flex justify-between text-[10px] text-indigo-600 font-black uppercase tracking-[0.2em]"><span>Interval</span><span>{interval}m</span></div>
-                                <input type="range" min="15" max="1440" step="15" value={interval} onChange={(e) => setInterval(parseInt(e.target.value))} className="w-full h-2 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
-                            </div>
-                            <hr className="border-slate-100 dark:border-slate-800" />
-                            <div className="space-y-3">
-                                <Button className="w-full h-12 gap-2 font-black text-[10px] uppercase tracking-widest shadow-lg bg-emerald-600 hover:bg-emerald-700" onClick={triggerCrawl}>
-                                    <Play size={16} /> Force Sync Now
-                                </Button>
-                                <Button className="w-full h-12 gap-2 font-black text-[10px] uppercase tracking-widest shadow-lg" variant="outline" onClick={() => updateConfig()}>
-                                    <Save size={16} /> Update Settings
-                                </Button>
-                            </div>
-                        </CardContent>
-                    </Card>
-                </div>
-            )}
-
-            {activeTab === 'users' && (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <Card className="shadow-2xl border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
-                        <CardHeader className="bg-white dark:bg-slate-900 border-b p-6">
-                            <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-                                <Users size={16} className="text-indigo-600" />
-                                Alert Network
-                            </CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-0">
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left">
-                                    <thead className="bg-slate-50 dark:bg-slate-950 border-b text-slate-400 font-black uppercase text-[9px] tracking-[0.3em]">
-                                        <tr><th className="px-8 py-4">Identity</th><th className="px-8 py-4">Focus</th><th className="px-8 py-4">Status</th><th className="px-8 py-4 text-right">Action</th></tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                        {userList?.map((user) => (
-                                            <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
-                                                <td className="px-8 py-5">
-                                                    <div className="flex items-center gap-4">
-                                                        <div className="h-10 w-10 rounded-xl bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-indigo-600 font-black border border-slate-300 dark:border-slate-700 shadow-sm">
-                                                            {user.email[0].toUpperCase()}
+            {
+                activeTab === 'users' && (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <Card className="shadow-2xl border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+                            <CardHeader className="bg-white dark:bg-slate-900 border-b p-6">
+                                <CardTitle className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
+                                    <Users size={16} className="text-indigo-600" />
+                                    Alert Network
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="p-0">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-50 dark:bg-slate-950 border-b text-slate-400 font-black uppercase text-[9px] tracking-[0.3em]">
+                                            <tr><th className="px-8 py-4">Identity</th><th className="px-8 py-4">Focus</th><th className="px-8 py-4">Status</th><th className="px-8 py-4 text-right">Action</th></tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                            {userList?.map((user) => (
+                                                <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
+                                                    <td className="px-8 py-5">
+                                                        <div className="flex items-center gap-4">
+                                                            <div className="h-10 w-10 rounded-xl bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-indigo-600 font-black border border-slate-300 dark:border-slate-700 shadow-sm">
+                                                                {user.email[0].toUpperCase()}
+                                                            </div>
+                                                            <div>
+                                                                <div className="font-black text-slate-900 dark:text-slate-50 text-sm">{user.email}</div>
+                                                                <div className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mt-1">{user.is_admin ? 'Admin' : 'User'}</div>
+                                                            </div>
                                                         </div>
-                                                        <div>
-                                                            <div className="font-black text-slate-900 dark:text-slate-50 text-sm">{user.email}</div>
-                                                            <div className="text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mt-1">{user.is_admin ? 'Admin' : 'User'}</div>
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="px-8 py-5">
-                                                    <Badge variant="outline" className="bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 font-black text-[9px] px-3 py-1 text-slate-700 dark:text-slate-300 shadow-sm">
-                                                        {user.industry_preference || 'General'}
-                                                    </Badge>
-                                                </td>
-                                                <td className="px-8 py-5">
-                                                    <button
-                                                        onClick={() => toggleUserAlert(user.id)}
-                                                        className={`flex items-center gap-2 text-[9px] font-black tracking-widest px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 ${user.receive_email_alerts ? 'text-emerald-500 bg-emerald-50/50 dark:bg-emerald-900/10' : 'text-slate-400'}`}
-                                                    >
-                                                        {user.receive_email_alerts ? <Bell size={12} className="fill-current" /> : <Mail size={12} />}
-                                                        {user.receive_email_alerts ? 'LIVE' : 'MUTED'}
-                                                    </button>
-                                                </td>
-                                                <td className="px-8 py-5 text-right"><Button variant="ghost" className="h-10 w-10 p-0 text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl" onClick={() => removeUser(user.id)}><X size={18} /></Button></td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                            <div className="p-8 bg-slate-100 dark:bg-slate-950/80 border-t flex flex-col sm:flex-row gap-4">
-                                <Input
-                                    className="max-w-sm bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-50 font-black text-xs border-slate-300 dark:border-slate-700 h-12 rounded-xl focus:ring-4 focus:ring-indigo-500/20 shadow-sm"
-                                    placeholder="Enroll email address..."
-                                    value={newUserEmail}
-                                    onChange={(e) => setNewUserEmail(e.target.value)}
-                                />
-                                <Button className="h-12 px-8 font-black text-xs uppercase tracking-widest bg-indigo-600 hover:bg-indigo-700 shadow-lg text-white" onClick={addRecipient}>Add Recipient</Button>
-                            </div>
-                        </CardContent>
-                    </Card>
-                </div>
-            )}
-        </div>
+                                                    </td>
+                                                    <td className="px-8 py-5">
+                                                        <Badge variant="outline" className="bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 font-black text-[9px] px-3 py-1 text-slate-700 dark:text-slate-300 shadow-sm">
+                                                            {user.industry_preference || 'General'}
+                                                        </Badge>
+                                                    </td>
+                                                    <td className="px-8 py-5">
+                                                        <button
+                                                            onClick={() => toggleUserAlert(user.id)}
+                                                            className={`flex items-center gap-2 text-[9px] font-black tracking-widest px-3 py-1.5 rounded-full border border-slate-200 dark:border-slate-700 ${user.receive_email_alerts ? 'text-emerald-500 bg-emerald-50/50 dark:bg-emerald-900/10' : 'text-slate-400'}`}
+                                                        >
+                                                            {user.receive_email_alerts ? <Bell size={12} className="fill-current" /> : <Mail size={12} />}
+                                                            {user.receive_email_alerts ? 'LIVE' : 'MUTED'}
+                                                        </button>
+                                                    </td>
+                                                    <td className="px-8 py-5 text-right"><Button variant="ghost" className="h-10 w-10 p-0 text-slate-300 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/20 rounded-xl" onClick={() => removeUser(user.id)}><X size={18} /></Button></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="p-8 bg-slate-100 dark:bg-slate-950/80 border-t flex flex-col sm:flex-row gap-4">
+                                    <Input
+                                        className="max-w-sm bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-50 font-black text-xs border-slate-300 dark:border-slate-700 h-12 rounded-xl focus:ring-4 focus:ring-indigo-500/20 shadow-sm"
+                                        placeholder="Enroll email address..."
+                                        value={newUserEmail}
+                                        onChange={(e) => setNewUserEmail(e.target.value)}
+                                    />
+                                    <Button className="h-12 px-8 font-black text-xs uppercase tracking-widest bg-indigo-600 hover:bg-indigo-700 shadow-lg text-white" onClick={addRecipient}>Add Recipient</Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+                )
+            }
+        </div >
     )
 }
