@@ -126,9 +126,12 @@ async def fetch_market_news(keyword: str, time_range: str = "w") -> List[str]:
         return []
 
     url = "https://google.serper.dev/news"
+    # Include country (Vietnam) and language (Vietnamese) to prioritize local news
     payload = json.dumps({
         "q": keyword,
-        "tbs": f"qdr:{time_range}"
+        "tbs": f"qdr:{time_range}",
+        "gl": "vn",
+        "hl": "vi"
     })
     headers = {
         'X-API-KEY': settings.SERPER_API_KEY,
@@ -137,12 +140,17 @@ async def fetch_market_news(keyword: str, time_range: str = "w") -> List[str]:
 
     async with httpx.AsyncClient() as client:
         try:
-            print(f"SERPER: Searching news for '{keyword}'")
+            print(f"SERPER: Searching news for '{keyword}' (Vietnam priority)")
             response = await client.post(url, headers=headers, data=payload)
             response.raise_for_status()
             results = response.json()
-            links = [item['link'] for item in results.get('news', [])[:8]]
-            print(f"SERPER: Found {len(links)} links")
+            # Original links list
+            all_links = [item['link'] for item in results.get('news', [])]
+            # Prioritize .vn domains
+            vn_links = [link for link in all_links if '.vn' in link]
+            # Return up to 8 links, preferring Vietnamese sources
+            links = (vn_links if vn_links else all_links)[:8]
+            print(f"SERPER: Found {len(links)} links (Vietnam priority applied)")
             return links
         except Exception as e:
             print(f"SERPER: Error fetching from Serper: {e}")
@@ -225,16 +233,26 @@ async def process_keyword_news_batch(keyword: str, force: bool = False):
                     if idx >= len(chunk): break
                     art = chunk[idx]
                     
-                    # Date extraction: Trafilatura > Gemini > Now
-                    pub_date = datetime.utcnow()
+                    # Date extraction: prioritize article metadata, then analysis date, ensure UTC
+                    pub_date = None
                     if art.get('metadata_date'):
                         try:
                             pub_date = date_parser.parse(art['metadata_date'])
-                        except: pass
-                    elif analysis.published_date:
+                        except Exception:
+                            pub_date = None
+                    if not pub_date and getattr(analysis, 'published_date', None):
                         try:
                             pub_date = date_parser.parse(analysis.published_date)
-                        except: pass
+                        except Exception:
+                            pub_date = None
+                    # Fallback to current UTC if parsing failed
+                    if not pub_date:
+                        pub_date = datetime.utcnow()
+                    # Ensure timezone-aware UTC datetime
+                    if pub_date.tzinfo is None:
+                        pub_date = pub_date.replace(tzinfo=datetime.timezone.utc)
+                    else:
+                        pub_date = pub_date.astimezone(datetime.timezone.utc)
 
                     # Extract primary price for News table
                     p_val = None
