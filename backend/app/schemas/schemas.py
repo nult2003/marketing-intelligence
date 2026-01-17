@@ -68,6 +68,8 @@ class AdminConfigUpdate(AdminConfigBase):
 
 class AdminConfig(AdminConfigBase):
     id: int
+    last_run_at: Optional[datetime] = None
+    keywords_with_data: List[str] = []
 
     class Config:
         from_attributes = True

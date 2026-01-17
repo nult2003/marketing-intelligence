@@ -23,6 +23,15 @@ from ..models.models import News, User, SearchCache, AdminConfig, MarketTrend
 # Initialize Celery
 worker = Celery("tasks", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
 
+# --- Automatic Scheduler (Celery Beat) ---
+worker.conf.beat_schedule = {
+    "dynamic-crawl-scheduler": {
+        "task": "check_automatic_crawl",
+        "schedule": 60.0, # Check every minute
+    },
+}
+worker.conf.timezone = 'UTC'
+
 # --- LangChain & Gemini Setup ---
 
 class MetricDetail(BaseModel):
@@ -93,6 +102,46 @@ def crawl_intelligence_task(force: bool = False):
     print(f"CELERY: Received crawl_intelligence_task (force={force})")
     return run_async_task(process_all_keywords(force=force))
 
+@worker.task(name="check_automatic_crawl")
+def check_automatic_crawl():
+    """Checked by Beat every minute to see if a crawl is due"""
+    return run_async_task(evaluate_automatic_trigger())
+
+async def evaluate_automatic_trigger():
+    """Logic to check if current time - last_run >= interval"""
+    async with AsyncSessionLocal() as db:
+        stmt = select(AdminConfig).order_by(AdminConfig.id.desc()).limit(1)
+        config = await db.scalar(stmt)
+        
+        if not config:
+            return "No config found"
+
+        now = datetime.now(timezone.utc)
+        last_run = config.last_run_at
+        interval = config.scraping_interval_minutes or 60
+        
+        if last_run is None:
+            print("CELERY: First run detect. Triggering crawl...")
+            # Set last_run_at immediately to prevent multiple triggers
+            config.last_run_at = now
+            await db.commit()
+            
+            crawl_intelligence_task.delay(force=False)
+            return "Triggered first run"
+
+        elapsed = (now - last_run).total_seconds() / 60
+        if elapsed >= interval:
+            print(f"CELERY: Interval reached ({elapsed:.1f}/{interval} min). Triggering crawl...")
+            # Update last_run_at immediately to prevent double-firing
+            config.last_run_at = now
+            await db.commit()
+            
+            crawl_intelligence_task.delay(force=False)
+            return "Triggered periodic run"
+        
+        print(f"CELERY: Checking interval - {elapsed:.1f}/{interval} min passed. No trigger needed.")
+        return f"Checking: {elapsed:.1f}/{interval} min passed"
+
 @worker.task(name="analyze_keyword_task", bind=True, max_retries=3)
 def analyze_keyword_task(self, keyword: str, force: bool = False):
     """Celery task for a single keyword to allow retries"""
@@ -118,6 +167,8 @@ async def process_all_keywords(force: bool = False):
         for kw in keywords:
             print(f"CELERY: Dispatching analysis task for: {kw}")
             analyze_keyword_task.delay(kw, force=force)
+        
+        # Note: last_run_at is now updated immediately after trigger to avoid race conditions
 
 async def fetch_market_news(keyword: str, time_range: str = "w") -> List[str]:
     """Fetch news URLs via Serper.dev (Google News)"""
@@ -193,8 +244,8 @@ async def process_keyword_news_batch(keyword: str, force: bool = False):
         to_process = []
         for url in urls:
             # Skip slow/problematic domains
-            domain = urlparse(url).netloc
-            if "bao" in domain or any(d in url for d in exclude_domains):
+            domain = urlparse(url).netloc.lower()
+            if domain.startswith("bao") or domain.startswith("www.bao") or any(d in url for d in exclude_domains):
                 print(f"SCRAPER: Skipping excluded domain: {url}")
                 continue
 

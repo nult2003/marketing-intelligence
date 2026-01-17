@@ -39,7 +39,7 @@ export const AdminSettings = () => {
     // Config Fetching
     const { data: config, isLoading: isLoadingConfig } = useQuery({
         queryKey: ['admin-config'],
-        queryFn: () => apiRequest<{ search_keywords: string[], scraping_interval_minutes: number }>('/admin/config')
+        queryFn: () => apiRequest<{ search_keywords: string[], scraping_interval_minutes: number, keywords_with_data: string[] }>('/admin/config')
     })
 
     const [keywords, setKeywords] = useState<string[]>([])
@@ -211,6 +211,10 @@ export const AdminSettings = () => {
     }
 
     const removeKeyword = async (kw: string) => {
+        if (config?.keywords_with_data?.includes(kw)) {
+            alert(`Keyword "${kw}" has existing data in the dashboard and cannot be removed to maintain historical integrity.`);
+            return;
+        }
         const updated = keywords.filter(k => k !== kw);
         setKeywords(updated);
         await updateConfig(updated);
@@ -527,12 +531,30 @@ export const AdminSettings = () => {
                                     <Button onClick={addKeyword} className="h-12 w-12 p-0 shadow-lg bg-indigo-600 hover:bg-indigo-700 transition-all text-white"><Plus size={24} strokeWidth={3} /></Button>
                                 </div>
                                 <div className="flex flex-wrap gap-2 pt-2">
-                                    {keywords.map(kw => (
-                                        <Badge key={kw} variant="outline" className="px-4 py-2 flex items-center gap-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-full shadow-sm">
-                                            <span className="text-slate-900 dark:text-slate-100 font-black text-[10px] uppercase tracking-wider">{kw}</span>
-                                            <button onClick={() => removeKeyword(kw)} className="text-slate-400 hover:text-rose-600 transition-colors"><X size={14} /></button>
-                                        </Badge>
-                                    ))}
+                                    {keywords.map(kw => {
+                                        const hasData = config?.keywords_with_data?.includes(kw);
+                                        return (
+                                            <Badge key={kw} variant="outline" className={cn(
+                                                "px-4 py-2 flex items-center gap-3 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 rounded-full shadow-sm",
+                                                hasData && "opacity-80 border-indigo-200 dark:border-indigo-900/40"
+                                            )}>
+                                                <div className="flex flex-col">
+                                                    <span className="text-slate-900 dark:text-slate-100 font-black text-[10px] uppercase tracking-wider">{kw}</span>
+                                                    {hasData && <span className="text-[8px] text-indigo-500 font-black tracking-tighter uppercase leading-none mt-0.5">HAS DATA</span>}
+                                                </div>
+                                                <button
+                                                    onClick={() => removeKeyword(kw)}
+                                                    className={cn(
+                                                        "transition-colors",
+                                                        hasData ? "text-slate-300 cursor-not-allowed" : "text-slate-400 hover:text-rose-600"
+                                                    )}
+                                                    title={hasData ? "Cannot delete keyword with existing data" : "Delete keyword"}
+                                                >
+                                                    <X size={14} />
+                                                </button>
+                                            </Badge>
+                                        );
+                                    })}
                                 </div>
                             </CardContent>
                         </Card>

@@ -37,8 +37,21 @@ async def get_admin_config(db: AsyncSession = Depends(get_async_db)):
         db.add(config)
         await db.commit()
         await db.refresh(config)
-        
-    return config
+    
+    # Get keywords that have news associated with them
+    news_stmt = select(News.industry_tag).distinct()
+    news_result = await db.execute(news_stmt)
+    keywords_with_data = [k for k in news_result.scalars().all() if k]
+    
+    # Return as a dict or set attribute on the model object (though it's not in the DB model)
+    # The safest way is to return a dict that matches the schema
+    return {
+        "id": config.id,
+        "search_keywords": config.search_keywords,
+        "scraping_interval_minutes": config.scraping_interval_minutes,
+        "last_run_at": config.last_run_at,
+        "keywords_with_data": keywords_with_data
+    }
 
 @router.get("/admin/analytics")
 async def get_analytics(

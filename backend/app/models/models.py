@@ -40,6 +40,7 @@ class AdminConfig(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     search_keywords: Mapped[list[str]] = mapped_column(JSON, default=list)
     scraping_interval_minutes: Mapped[int] = mapped_column(default=60)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 class SearchCache(Base):
     __tablename__ = "search_cache"
